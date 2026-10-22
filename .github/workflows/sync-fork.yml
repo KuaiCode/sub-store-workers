@@ -1,0 +1,81 @@
+
+name: Sync Fork Upstream
+
+on:
+  # 每小时检查 Workers 上游
+  schedule:
+    - cron: '17 * * * *'
+
+  # 允许网页手动运行
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: sync-fork
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.FORK_SYNC_TOKEN }}
+
+      - name: Merge upstream
+        id: sync
+        shell: bash
+        run: |
+          # 设置 Git 提交身份
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # 获取 Workers 适配仓库上游
+          git remote add upstream https://github.com/ios151/sub-store-workers.git
+          git fetch upstream main:refs/remotes/upstream/main
+
+          BEFORE=$(git rev-parse HEAD)
+
+          # 保留自己仓库记录的 Sub-Store 已部署版本
+          printf '.upstream-sha merge=keep-local\n' > .git/info/attributes
+          git config merge.keep-local.driver true
+
+          # 合并上游，其他文件冲突则停止
+          git merge --no-commit --no-ff upstream/main
+
+          # 恢复本仓库版本记录
+          git show "${BEFORE}:.upstream-sha" > .upstream-sha
+          git add .upstream-sha
+
+          # 完成合并提交
+          if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+            git commit --no-edit
+          fi
+
+          AFTER=$(git rev-parse HEAD)
+
+          if [ "$BEFORE" != "$AFTER" ]; then
+            # 更新自己的 Fork
+            git push origin HEAD:main
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Already up to date"
+          fi
+
+      - name: Trigger Cloudflare deployment
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 触发已有 Sub-Store 构建部署工作流
+          gh workflow run sync-upstream.yml \
+            --ref main \
+            -f force=true
