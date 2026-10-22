@@ -206,6 +206,32 @@ jobs:
           cp dist/worker.js pages-dist/_worker.js
           cp dist/quickjs.wasm pages-dist/quickjs.wasm
 
+      - name: Ensure Pages project exists
+        if: steps.check.outputs.needed == 'true'
+        working-directory: sub-store-workers
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAGES_PROJECT_NAME: ${{ secrets.PAGES_PROJECT_NAME }}
+        run: |
+          # 在 Cloudflare 查询指定的 Pages 项目
+          CODE=$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/pages/projects/${PAGES_PROJECT_NAME}")
+
+          if [ "$CODE" = "404" ]; then
+            # 项目不存在：自动创建 Direct Upload 项目
+            npx wrangler pages project create \
+              "$PAGES_PROJECT_NAME" \
+              --production-branch main
+          elif [ "$CODE" != "200" ]; then
+            # 权限或网络异常：停止部署
+            echo "Pages project check failed: HTTP $CODE"
+            exit 1
+          else
+            echo "Pages project already exists"
+          fi
+
       - name: Deploy Pages
         if: steps.check.outputs.needed == 'true'
         working-directory: sub-store-workers
