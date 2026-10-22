@@ -2,9 +2,9 @@
 name: Sync Fork Upstream
 
 on:
-  # 每小时检查 Workers 上游
+  # 每天北京时间 00:30 检查 Workers 上游
   schedule:
-    - cron: '17 * * * *'
+    - cron: '30 16 * * *'
 
   # 允许网页手动运行
   workflow_dispatch:
